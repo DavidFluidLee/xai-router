@@ -12,15 +12,15 @@ import (
 
 func initConfig() {
 	// auto migrate database
-	//err := static.InitConfig("conf/config.yaml")
-	//if err != nil {
-//		log.Panic("failed to init config: %v", err)
-	//}
+	err := static.InitConfig("conf/config.yaml")
+	if err != nil {
+		log.Panic("failed to init config: %v", err)
+	}
 	log.Info("config init success")
 
-	//if err != nil {
-//		log.Error("failed to setup runner dependencies: %v", err)
-//	}
+	if err != nil {
+		log.Error("failed to setup runner dependencies: %v", err)
+	}
 	log.Info("runner dependencies init success")
 }
 
