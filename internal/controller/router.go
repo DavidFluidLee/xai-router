@@ -3,7 +3,7 @@ package controller
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/langgenius/dify-sandbox/internal/middleware"
-//	"github.com/langgenius/dify-sandbox/internal/static"
+	"github.com/langgenius/dify-sandbox/internal/static"
 	"net/http"
 )
 
