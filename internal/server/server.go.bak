@@ -1,0 +1,17 @@
+package server
+
+import "fmt"
+
+func initConfig() {
+}
+
+func initServer() {
+}
+
+
+func Run() {
+     fmt.Println("server!") 
+	// init config
+	initConfig()
+
+}
