@@ -33,16 +33,23 @@ func initGatewayServer() {
 	router.SetLoadBalancerStrategy(config.Gateway.LoadBalancerStrategy)
 	
 	// 设置端口
-	router.SetPorts(config.Gateway.Port, config.Gateway.Port+1)
+	router.SetPorts(config.Gateway.Port, config.App.Port)
 
 	// 启动网关服务器
-	addr := fmt.Sprintf(":%d", config.Gateway.Port)
-	log.Info("Starting gateway server on " + addr)
+	// 启动网关服务器
+	gatewayAddr := fmt.Sprintf(":%d", config.Gateway.Port)
+	adminAddr := fmt.Sprintf(":%d", config.App.Port)
+	log.Info("Starting gateway server on " + gatewayAddr)
+	log.Info("Starting admin API on " + adminAddr)
 	log.Info("Load balancer strategy: %s", config.Gateway.LoadBalancerStrategy)
 	log.Info("Health check interval: %d seconds", config.Gateway.HealthCheckInterval)
-	log.Info("Redis address: %s", config.Redis.Addr)
-	
-	if err := router.Run(addr); err != nil {
+		// 调试：打印 Redis 配置详情
+	log.Info("Redis Config - Addr: %s, Password: '%s', DB: %d", 
+		config.Redis.Addr, 
+		config.Redis.Password, 
+		config.Redis.DB)
+
+	if err := router.Run(gatewayAddr); err != nil {
 		log.Panic("Failed to start gateway server: %v", err)
 	}
 }

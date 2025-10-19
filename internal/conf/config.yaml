@@ -1,14 +1,16 @@
 app:
   port: 8194
-  debug: True
-  key: dify-sandbox
+  debug: true
+  gateway_key: dify-sandbox    # 网关业务接口使用的 Key
+  admin_key: dify-admin-key    # 管理接口使用的 Key
+
 max_workers: 4
 max_requests: 50
 worker_timeout: 5
-python_path: /usr/local/bin/python3
-enable_network: True # please make sure there is no network risk in your environment
-enable_preload: False # please keep it as False for security purposes
-allowed_syscalls: # please leave it empty if you have no idea how seccomp works
+enable_network: true
+enable_preload: false
+allowed_syscalls: []
+
 proxy:
   socks5: ''
   http: ''
@@ -17,8 +19,7 @@ proxy:
 # 网关配置
 gateway:
   port: 8080
-  redis_addr: "localhost:6379"
-  load_balancer_strategy: "least-connections" # "round-robin", "least-connections", "random"
+  load_balancer_strategy: "least-connections"
   health_check_interval: 15
   cors_enabled: true
 

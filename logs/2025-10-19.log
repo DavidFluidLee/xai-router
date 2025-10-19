@@ -190,3 +190,29 @@
 [INFO]Load balancer strategy: least-connections
 [INFO]Health check interval: 15 seconds
 [INFO]Redis address: localhost:6379
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+[INFO]Redis address: localhost:6379
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+[INFO]Redis address: localhost:6379
+[PANIC]Failed to start gateway server: listen tcp :8080: bind: address already in use
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+[INFO]Redis address: localhost:6379
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+[INFO]Redis address: localhost:6379
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+[INFO]Redis address: localhost:6379
