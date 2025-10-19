@@ -22,6 +22,7 @@ type RouteManager struct {
 	router        *mux.Router
 	updateChannel chan struct{}
 	mutex         sync.RWMutex
+	redisEnabled  bool
 }
 
 func NewRouteManager(redisClient *redis.Client) *RouteManager {
@@ -30,10 +31,21 @@ func NewRouteManager(redisClient *redis.Client) *RouteManager {
 		routeCache:    make(map[string]RouteConfig),
 		router:        mux.NewRouter(),
 		updateChannel: make(chan struct{}, 1),
+		redisEnabled:  true,
 	}
 
-	// 从Redis加载初始配置
-	rm.loadRoutesFromRedis()
+	// 测试 Redis 连接
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	_, err := redisClient.Ping(ctx).Result()
+	if err != nil {
+		log.Printf("⚠️  Redis not available, using in-memory storage only")
+		rm.redisEnabled = false
+	} else {
+		// 从Redis加载初始配置
+		rm.loadRoutesFromRedis()
+	}
 
 	// 启动配置监听
 	go rm.watchRouteChanges()
@@ -104,6 +116,10 @@ func (rm *RouteManager) matchPathWithParams(routePath, requestPath string) bool 
 
 // 从Redis加载路由配置
 func (rm *RouteManager) loadRoutesFromRedis() {
+	if !rm.redisEnabled {
+		return
+	}
+
 	ctx := context.Background()
 	routes, err := rm.redisClient.HGetAll(ctx, "gateway:routes").Result()
 	if err != nil {
@@ -164,21 +180,73 @@ func (rm *RouteManager) AddRoute(route RouteConfig) error {
 		return err
 	}
 
-	// 保存到Redis
-	ctx := context.Background()
-	routeJSON, _ := json.Marshal(route)
-	
-	err := rm.redisClient.HSet(ctx, "gateway:routes", route.ID, routeJSON).Err()
-	if err != nil {
-		return err
+	// 保存到Redis（如果可用）
+	if rm.redisEnabled {
+		ctx := context.Background()
+		routeJSON, _ := json.Marshal(route)
+		
+		err := rm.redisClient.HSet(ctx, "gateway:routes", route.ID, routeJSON).Err()
+		if err != nil {
+			log.Printf("Failed to save route to Redis: %v", err)
+			// 继续在内存中保存
+		} else {
+			// 更新最后修改时间
+			rm.redisClient.Set(ctx, "gateway:routes:last_updated", 
+				time.Now().Format(time.RFC3339), 0)
+		}
 	}
-
-	// 更新最后修改时间
-	rm.redisClient.Set(ctx, "gateway:routes:last_updated", 
-		time.Now().Format(time.RFC3339), 0)
 
 	// 更新内存缓存
 	rm.routeCache[route.ID] = route
+
+	// 通知更新
+	select {
+	case rm.updateChannel <- struct{}{}:
+	default:
+		// 通道已满，跳过
+	}
+
+	return nil
+}
+
+// 更新路由
+func (rm *RouteManager) UpdateRoute(routeID string, newRoute RouteConfig) error {
+	rm.mutex.Lock()
+	defer rm.mutex.Unlock()
+
+	// 检查路由是否存在
+	if _, exists := rm.routeCache[routeID]; !exists {
+		return fmt.Errorf("route %s not found", routeID)
+	}
+
+	// 验证新的路由配置
+	if err := rm.validateRoute(newRoute); err != nil {
+		return err
+	}
+
+	// 确保ID一致
+	if routeID != newRoute.ID {
+		return fmt.Errorf("route ID cannot be changed")
+	}
+
+	// 保存到Redis（如果可用）
+	if rm.redisEnabled {
+		ctx := context.Background()
+		routeJSON, _ := json.Marshal(newRoute)
+		
+		err := rm.redisClient.HSet(ctx, "gateway:routes", routeID, routeJSON).Err()
+		if err != nil {
+			log.Printf("Failed to update route in Redis: %v", err)
+			// 继续在内存中更新
+		} else {
+			// 更新最后修改时间
+			rm.redisClient.Set(ctx, "gateway:routes:last_updated", 
+				time.Now().Format(time.RFC3339), 0)
+		}
+	}
+
+	// 更新内存缓存
+	rm.routeCache[routeID] = newRoute
 
 	// 通知更新
 	select {
@@ -198,14 +266,16 @@ func (rm *RouteManager) DeleteRoute(routeID string) error {
 	ctx := context.Background()
 	
 	// 从Redis删除
-	err := rm.redisClient.HDel(ctx, "gateway:routes", routeID).Err()
-	if err != nil {
-		return err
-	}
+	if rm.redisEnabled {
+		err := rm.redisClient.HDel(ctx, "gateway:routes", routeID).Err()
+		if err != nil {
+			return err
+		}
 
-	// 更新最后修改时间
-	rm.redisClient.Set(ctx, "gateway:routes:last_updated", 
-		time.Now().Format(time.RFC3339), 0)
+		// 更新最后修改时间
+		rm.redisClient.Set(ctx, "gateway:routes:last_updated", 
+			time.Now().Format(time.RFC3339), 0)
+	}
 
 	// 从内存缓存删除
 	delete(rm.routeCache, routeID)
@@ -270,3 +340,4 @@ func (rm *RouteManager) GetAllRoutes() []RouteConfig {
 	}
 	return routes
 }
+

@@ -86,8 +86,22 @@ func (sp *SandboxPool) updateInstanceInRedis(instance *SandboxInstance) {
 func (sp *SandboxPool) RegisterInstance(instance *SandboxInstance) error {
 	sp.instances[instance.ID] = instance
 
-	// 注册到 Redis - 这里不需要返回值
+	// 注册到 Redis
 	sp.updateInstanceInRedis(instance)
+	return nil
+}
+
+// 新增：删除沙箱实例
+func (sp *SandboxPool) RemoveInstance(instanceID string) error {
+	delete(sp.instances, instanceID)
+
+	// 从 Redis 中删除
+	ctx := context.Background()
+	err := sp.redisClient.HDel(ctx, "sandbox:instances", instanceID).Err()
+	if err != nil {
+		log.Printf("Failed to remove instance from Redis: %v", err)
+		return err
+	}
 	return nil
 }
 

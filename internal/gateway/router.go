@@ -30,9 +30,30 @@ type DistributedRouter struct {
 func NewDistributedRouter(redisAddr, redisPassword string) *DistributedRouter {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     redisAddr,
-		Password: redisPassword, // 添加密码
+		Password: redisPassword,
 		DB:       0,
 	})
+
+	// 测试 Redis 连接
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	_, err := rdb.Ping(ctx).Result()
+	if err != nil {
+		if err.Error() == "NOAUTH Authentication required." {
+			log.Printf("❌ Redis authentication failed. Please check your Redis password in config.yaml")
+			log.Printf("💡 You can:")
+			log.Printf("   1. Set the correct password in conf/config.yaml")
+			log.Printf("   2. Disable Redis authentication: redis-cli -> CONFIG SET requirepass \"\"")
+			log.Printf("   3. Or run without Redis (routes will be stored in memory only)")
+		} else {
+			log.Printf("❌ Failed to connect to Redis at %s: %v", redisAddr, err)
+		}
+		// 继续运行，但使用内存存储
+		log.Printf("⚠️  Running with in-memory storage only. Routes will not be persisted.")
+	} else {
+		log.Printf("✅ Successfully connected to Redis at %s", redisAddr)
+	}
 
 	router := &DistributedRouter{
 		redisClient:    rdb,
@@ -41,8 +62,8 @@ func NewDistributedRouter(redisAddr, redisPassword string) *DistributedRouter {
 		routeManager:   NewRouteManager(rdb),
 		sandboxPool:    NewSandboxPool(rdb),
 		loadBalancer:   NewLoadBalancer(),
-		gatewayPort:    8080,    // 网关端口
-		managementPort: 8081,    // 管理API端口
+		gatewayPort:    8080,
+		managementPort: 8081,
 	}
 
 	router.setupRoutes()
@@ -76,9 +97,11 @@ func (dr *DistributedRouter) setupGinRoutes() {
 	{
 		adminGroup.GET("/routes", dr.listRoutesHandler)
 		adminGroup.POST("/routes", dr.addRouteHandler)
+		adminGroup.PUT("/routes/:id", dr.updateRouteHandler) // 新增更新端点
 		adminGroup.DELETE("/routes/:id", dr.deleteRouteHandler)
 		adminGroup.GET("/sandboxes", dr.listSandboxesHandler)
 		adminGroup.POST("/sandboxes/register", dr.registerSandboxHandler)
+		adminGroup.DELETE("/sandboxes/:id", dr.deleteSandboxHandler)
 		adminGroup.GET("/health", dr.healthHandler)
 	}
 }
@@ -123,18 +146,13 @@ func (dr *DistributedRouter) handleSandboxRequest(route *RouteConfig, w http.Res
 		return
 	}
 
-	// 构建执行请求
-	body, _ := io.ReadAll(r.Body)
+	// 构建符合沙箱期望的请求格式
 	executionReq := map[string]interface{}{
-		"code": route.Code,
-		"input": map[string]interface{}{
-			"method":  r.Method,
-			"path":    r.URL.Path,
-			"headers": r.Header,
-			"query":   r.URL.Query(),
-			"body":    string(body),
-		},
-		"timeout": route.Timeout,
+		"language":       "python3",
+		"code":           route.Code,
+		"preload":        "",
+		"enable_network": true,
+		"timeout":        route.Timeout,
 	}
 
 	// 转发到沙箱执行
@@ -150,7 +168,9 @@ func (dr *DistributedRouter) forwardToSandbox(instance *SandboxInstance, reqData
 	client := &http.Client{Timeout: timeout}
 
 	reqJSON, _ := json.Marshal(reqData)
-	req, err := http.NewRequest("POST", instance.URL+"/execute", bytes.NewBuffer(reqJSON))
+	
+	// 使用正确的沙箱端点 /run
+	req, err := http.NewRequest("POST", instance.URL+"/run", bytes.NewBuffer(reqJSON))
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(gin.H{"error": err.Error()})
@@ -158,6 +178,7 @@ func (dr *DistributedRouter) forwardToSandbox(instance *SandboxInstance, reqData
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", "xai-sandbox") // 添加 API Key
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -212,6 +233,24 @@ func (dr *DistributedRouter) addRouteHandler(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "route added", "id": route.ID})
 }
 
+// 新增：更新路由处理器
+func (dr *DistributedRouter) updateRouteHandler(c *gin.Context) {
+	id := c.Param("id")
+	
+	var route RouteConfig
+	if err := c.BindJSON(&route); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := dr.routeManager.UpdateRoute(id, route); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "route updated", "id": route.ID})
+}
+
 func (dr *DistributedRouter) deleteRouteHandler(c *gin.Context) {
 	id := c.Param("id")
 	if err := dr.routeManager.DeleteRoute(id); err != nil {
@@ -240,6 +279,16 @@ func (dr *DistributedRouter) registerSandboxHandler(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"message": "sandbox registered"})
+}
+
+func (dr *DistributedRouter) deleteSandboxHandler(c *gin.Context) {
+	id := c.Param("id")
+	if err := dr.sandboxPool.RemoveInstance(id); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "sandbox deleted"})
 }
 
 func (dr *DistributedRouter) healthHandler(c *gin.Context) {
