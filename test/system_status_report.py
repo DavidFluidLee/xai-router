@@ -6,8 +6,14 @@
 import requests
 import time
 
-ADMIN_URL = "http://localhost:8081"
-GATEWAY_URL = "http://localhost:8080"
+ADMIN_URL = "http://localhost:8195"
+GATEWAY_URL = "http://localhost:8081"
+
+# API 认证头
+HEADERS = {
+    "X-Api-Key": "xai-admin-key"
+}
+
 
 def generate_final_report():
     """生成最终系统状态报告"""
@@ -20,7 +26,7 @@ def generate_final_report():
     print("🔧 系统基本信息")
     print("-" * 30)
     
-    health_response = requests.get(f"{ADMIN_URL}/admin/health", timeout=10)
+    health_response = requests.get(f"{ADMIN_URL}/admin/health", headers=HEADERS, timeout=10)
     if health_response.status_code == 200:
         health_data = health_response.json()
         print(f"   状态: {health_data.get('status', 'Unknown')}")
@@ -32,7 +38,7 @@ def generate_final_report():
     print("📊 配置版本信息")
     print("-" * 30)
     
-    config_response = requests.get(f"{ADMIN_URL}/admin/config/version", timeout=10)
+    config_response = requests.get(f"{ADMIN_URL}/admin/config/version",headers=HEADERS, timeout=10)
     if config_response.status_code == 200:
         config_data = config_response.json()
         print(f"   全局版本: {config_data.get('global_version', 'Unknown')}")
@@ -47,7 +53,7 @@ def generate_final_report():
     print("🌊 事件系统状态")
     print("-" * 30)
     
-    stats_response = requests.get(f"{ADMIN_URL}/admin/events/stats", timeout=10)
+    stats_response = requests.get(f"{ADMIN_URL}/admin/events/stats",headers=HEADERS, timeout=10)
     if stats_response.status_code == 200:
         stats_data = stats_response.json()
         print(f"   总事件数: {stats_data.get('total_events', 0)}")
@@ -65,7 +71,7 @@ def generate_final_report():
     print("🛣️ 当前路由列表")
     print("-" * 30)
     
-    routes_response = requests.get(f"{ADMIN_URL}/admin/routes", timeout=10)
+    routes_response = requests.get(f"{ADMIN_URL}/admin/routes", headers=HEADERS,timeout=10)
     if routes_response.status_code == 200:
         routes_data = routes_response.json()
         routes_list = routes_data.get('routes', [])
@@ -110,7 +116,7 @@ def generate_final_report():
     print("-" * 30)
     
     # 检查关键指标
-    config_response = requests.get(f"{ADMIN_URL}/admin/config/version", timeout=10)
+    config_response = requests.get(f"{ADMIN_URL}/admin/config/version", headers=HEADERS,timeout=10)
     if config_response.status_code == 200:
         config_data = config_response.json()
         memory_routes = config_data.get('memory_routes', 0)
@@ -132,9 +138,9 @@ def generate_final_report():
     for endpoint, name in test_endpoints:
         try:
             if "trigger" in endpoint:
-                response = requests.post(f"{ADMIN_URL}{endpoint}", timeout=5)
+                response = requests.post(f"{ADMIN_URL}{endpoint}", headers=HEADERS,timeout=5)
             else:
-                response = requests.get(f"{ADMIN_URL}{endpoint}", timeout=5)
+                response = requests.get(f"{ADMIN_URL}{endpoint}",headers=HEADERS, timeout=5)
             
             if response.status_code == 200:
                 working_count += 1
@@ -146,8 +152,8 @@ def generate_final_report():
     else:
         print(f"   ⚠️ 管理接口: {working_count}/{len(test_endpoints)} 正常")
     
-    print(f"   📍 管理端口: 8081")
-    print(f"   📍 网关端口: 8080")
+    print(f"   📍 管理端口: 8195")
+    print(f"   📍 网关端口: 8081")
     print()
     
     print("🎉 系统状态: 健康运行中")
