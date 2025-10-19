@@ -1,5 +1,7 @@
 package gateway
 
+import "time"
+
 // 路由配置
 type RouteConfig struct {
 	ID          string            `json:"id"`
@@ -11,6 +13,8 @@ type RouteConfig struct {
 	Target      string            `json:"target,omitempty"`
 	Timeout     int               `json:"timeout,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+	CreatedAt   int64             `json:"created_at,omitempty"`
+	UpdatedAt   int64             `json:"updated_at,omitempty"`
 }
 
 // 沙箱服务实例
@@ -27,4 +31,23 @@ type SandboxInstance struct {
 type LoadBalancerInterface interface {
 	Select(instances []*SandboxInstance) *SandboxInstance
 	SetStrategy(strategy string)
+}
+
+// 路由事件
+type RouteEvent struct {
+	EventID   string      `json:"event_id"`
+	EventType string      `json:"event_type"` // CREATE, UPDATE, DELETE, HEALTH_UPDATE
+	RouteID   string      `json:"route_id"`
+	RouteData *RouteConfig `json:"route_data,omitempty"`
+	Timestamp int64       `json:"timestamp"`
+	Source    string      `json:"source"`
+}
+
+// 事件消费者配置
+type EventConsumerConfig struct {
+	ConsumerGroup string        `json:"consumer_group"`
+	ConsumerName  string        `json:"consumer_name"`
+	BatchSize     int64         `json:"batch_size"`
+	BlockTime     time.Duration `json:"block_time"`
+	AutoAck       bool          `json:"auto_ack"`
 }

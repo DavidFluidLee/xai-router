@@ -103,6 +103,12 @@ func (dr *DistributedRouter) setupGinRoutes() {
 		adminGroup.POST("/sandboxes/register", dr.registerSandboxHandler)
 		adminGroup.DELETE("/sandboxes/:id", dr.deleteSandboxHandler)
 		adminGroup.GET("/health", dr.healthHandler)
+
+        // 新增事件流管理接口
+		adminGroup.GET("/events/stream-info", dr.getStreamInfoHandler)
+		adminGroup.GET("/events/pending", dr.getPendingMessagesHandler)
+		adminGroup.POST("/events/test", dr.publishTestEventHandler)
+		adminGroup.GET("/events/consumers", dr.getEventConsumersHandler) // 新增
 	}
 }
 

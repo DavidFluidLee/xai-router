@@ -61,3 +61,27 @@ chmod +x test_individual_operations.sh
 
 这些测试用例可以全面验证你的 XAI Router Gateway 的所有功能
 
+
+
+
+启动成功状态
+
+从日志可以看到：
+
+🚀 服务状态
+
+网关服务器: 运行在 :8080
+管理API: 运行在 :8081
+Redis连接: ✅ 成功
+事件消费者: ✅ 已启动
+路由加载: 4个路由已从Redis加载
+🔄 系统运行正常
+
+健康检查正常运行（每15秒）
+配置监听正常运行（每10秒检查更新）
+事件消费者后台运行
+
+
+
+
+curl http://localhost:8081/admin/events/stream-info
