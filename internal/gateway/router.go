@@ -110,6 +110,13 @@ func (dr *DistributedRouter) setupGinRoutes() {
 		adminGroup.POST("/events/test", dr.publishTestEventHandler)
 		adminGroup.GET("/events/consumers", dr.getEventConsumersHandler) // 新增
 
+            // 🔧 新增：注册新的管理接口
+        adminGroup.GET("/config/version", dr.getConfigVersionHandler)
+    adminGroup.GET("/events/stats", dr.getEventStatsHandler)
+    adminGroup.POST("/sync/trigger", dr.triggerSyncHandler)
+    adminGroup.GET("/routes/:routeId/details", dr.getRouteDetailsHandler)
+    adminGroup.POST("/events/cleanup", dr.cleanupEventsHandler)
+
 	}
 }
 

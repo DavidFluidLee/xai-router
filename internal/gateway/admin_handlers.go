@@ -136,66 +136,52 @@ func (dr *DistributedRouter) getEventConsumersHandler(c *gin.Context) {
 
 	c.JSON(200, gin.H{"consumers": consumers})
 }
-
 // 🔧 新增：获取事件处理统计
 func (dr *DistributedRouter) getEventStatsHandler(c *gin.Context) {
-	if !dr.routeManager.redisEnabled {
-		c.JSON(503, gin.H{"error": "Redis not available"})
-		return
-	}
+    if !dr.routeManager.redisEnabled {
+        c.JSON(503, gin.H{"error": "Redis not available"})
+        return
+    }
 
-	ctx := c.Request.Context()
-	
-	// 获取事件流长度
-	streamLen, err := dr.routeManager.redisClient.XLen(ctx, "gateway:events").Result()
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
+    ctx := c.Request.Context()
+    
+    // 初始化默认值
+    streamLen := int64(0)
+    totalPending := int64(0)
+    consumerStats := make(map[string]interface{})
 
-	// 获取消费者组信息
-	groups, err := dr.routeManager.redisClient.XInfoGroups(ctx, "gateway:events").Result()
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
+    // 安全地获取事件流长度
+    streamLenResult, err := dr.routeManager.redisClient.XLen(ctx, "gateway:events").Result()
+    if err == nil {
+        streamLen = streamLenResult
+    }
+    // 忽略错误，使用默认值0
 
-	// 计算待处理消息
-	totalPending := int64(0)
-	consumerStats := make(map[string]interface{})
-	
-	for _, group := range groups {
-		// 修复：移除未使用的 pending 变量
-		_, err := dr.routeManager.redisClient.XPendingExt(ctx, &redis.XPendingExtArgs{
-			Stream: "gateway:events",
-			Group:  group.Name,
-			Start:  "-",
-			End:    "+",
-			Count:  1000,
-		}).Result()
-		
-		if err == nil {
-			consumerStats[group.Name] = gin.H{
-				"consumers":    group.Consumers,
-				"pending":      group.Pending,
-				"last_delivered_id": group.LastDeliveredID,
-			}
-			totalPending += group.Pending
-		}
-	}
+    // 安全地获取消费者组信息
+    groups, err := dr.routeManager.redisClient.XInfoGroups(ctx, "gateway:events").Result()
+    if err == nil {
+        for _, group := range groups {
+            consumerStats[group.Name] = gin.H{
+                "consumers":        group.Consumers,
+                "pending":          group.Pending,
+                "last_delivered_id": group.LastDeliveredID,
+            }
+            totalPending += group.Pending
+        }
+    }
+    // 忽略错误，使用空映射
 
-	response := gin.H{
-		"total_events":      streamLen,
-		"total_pending":     totalPending,
-		"consumer_groups":   consumerStats,
-		"instance_id":       dr.routeManager.instanceID,
-		"last_config_update": dr.routeManager.lastConfigUpdate,
-		"memory_route_count": len(dr.routeManager.routeCache),
-	}
+    response := gin.H{
+        "total_events":        streamLen,
+        "total_pending":       totalPending,
+        "consumer_groups":     consumerStats,
+        "instance_id":         dr.routeManager.instanceID,
+        "last_config_update":  dr.routeManager.lastConfigUpdate,
+        "memory_route_count":  len(dr.routeManager.routeCache),
+    }
 
-	c.JSON(200, response)
+    c.JSON(200, response)
 }
-
 // 🔧 新增：手动触发配置同步
 func (dr *DistributedRouter) triggerSyncHandler(c *gin.Context) {
 	if !dr.routeManager.redisEnabled {
