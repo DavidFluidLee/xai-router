@@ -13,3 +13,17 @@ proxy:
   socks5: ''
   http: ''
   https: ''
+
+# 网关配置
+gateway:
+  port: 8080
+  redis_addr: "localhost:6379"
+  load_balancer_strategy: "least-connections" # "round-robin", "least-connections", "random"
+  health_check_interval: 15
+  cors_enabled: true
+
+# Redis配置
+redis:
+  addr: "localhost:6379"
+  password: "develop"
+  db: 0

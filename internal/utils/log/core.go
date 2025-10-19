@@ -174,6 +174,7 @@ func SetLogLevel(level int) {
 	main_log.SetLogLevel(level)
 }
 
+// 标准日志方法
 func Debug(format string, v ...interface{}) {
 	if main_log == nil {
 		initlog()
@@ -209,6 +210,43 @@ func Panic(format string, v ...interface{}) {
 	main_log.Panic(format, true, v...)
 }
 
+// 格式化日志方法 (新增)
+func Debugf(format string, v ...interface{}) {
+	if main_log == nil {
+		initlog()
+	}
+	main_log.Debug(format, true, v...)
+}
+
+func Infof(format string, v ...interface{}) {
+	if main_log == nil {
+		initlog()
+	}
+	main_log.Info(format, true, v...)
+}
+
+func Warnf(format string, v ...interface{}) {
+	if main_log == nil {
+		initlog()
+	}
+	main_log.Warn(format, true, v...)
+}
+
+func Errorf(format string, v ...interface{}) {
+	if main_log == nil {
+		initlog()
+	}
+	main_log.Error(format, true, v...)
+}
+
+func Panicf(format string, v ...interface{}) {
+	if main_log == nil {
+		initlog()
+	}
+	main_log.Panic(format, true, v...)
+}
+
+// 静默日志方法
 func SlientDebug(format string, v ...interface{}) {
 	if main_log == nil {
 		initlog()
@@ -238,6 +276,42 @@ func SlientError(format string, v ...interface{}) {
 }
 
 func SlientPanic(format string, v ...interface{}) {
+	if main_log == nil {
+		initlog()
+	}
+	main_log.Panic(format, false, v...)
+}
+
+// 静默格式化日志方法 (新增)
+func SlientDebugf(format string, v ...interface{}) {
+	if main_log == nil {
+		initlog()
+	}
+	main_log.Debug(format, false, v...)
+}
+
+func SlientInfof(format string, v ...interface{}) {
+	if main_log == nil {
+		initlog()
+	}
+	main_log.Info(format, false, v...)
+}
+
+func SlientWarnf(format string, v ...interface{}) {
+	if main_log == nil {
+		initlog()
+	}
+	main_log.Warn(format, false, v...)
+}
+
+func SlientErrorf(format string, v ...interface{}) {
+	if main_log == nil {
+		initlog()
+	}
+	main_log.Error(format, false, v...)
+}
+
+func SlientPanicf(format string, v ...interface{}) {
 	if main_log == nil {
 		initlog()
 	}

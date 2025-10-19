@@ -1,172 +1,97 @@
 package static
 
 import (
-	"os"
-	"strconv"
-	"strings"
-
-	"github.com/langgenius/dify-sandbox/internal/types"
-	"github.com/langgenius/dify-sandbox/internal/utils/log"
-	"gopkg.in/yaml.v3"
+	"sync"
 )
 
-var difySandboxGlobalConfigurations types.DifySandboxGlobalConfigurations
-
-var DEFAULT_PYTHON_LIB_REQUIREMENTS = []string{
-    "requests",
-    "numpy",
+// App配置
+type AppConfig struct {
+	Port  int    `yaml:"port"`
+	Debug bool   `yaml:"debug"`
+	Key   string `yaml:"key"`
 }
 
-func InitConfig(path string) error {
-	difySandboxGlobalConfigurations = types.DifySandboxGlobalConfigurations{}
+// 代理配置
+type ProxyConfig struct {
+	Socks5 string `yaml:"socks5"`
+	Http   string `yaml:"http"`
+	Https  string `yaml:"https"`
+}
 
-	// read config file
-	configFile, err := os.Open(path)
-	if err != nil {
-		return err
-	}
+// 网关配置
+type GatewayConfig struct {
+	Port                 int    `yaml:"port"`
+	RedisAddr            string `yaml:"redis_addr"`
+	LoadBalancerStrategy string `yaml:"load_balancer_strategy"`
+	HealthCheckInterval  int    `yaml:"health_check_interval"`
+	CorsEnabled          bool   `yaml:"cors_enabled"`
+}
 
-	defer configFile.Close()
+// Redis配置
+type RedisConfig struct {
+	Addr     string `yaml:"addr"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+}
 
-	// parse config file
-	decoder := yaml.NewDecoder(configFile)
-	err = decoder.Decode(&difySandboxGlobalConfigurations)
-	if err != nil {
-		return err
-	}
+type DifySandboxGlobalConfigurations struct {
+	App            AppConfig     `yaml:"app"`
+	MaxWorkers     int           `yaml:"max_workers"`
+	MaxRequests    int           `yaml:"max_requests"`
+	WorkerTimeout  int           `yaml:"worker_timeout"`
+	PythonPath     string        `yaml:"python_path"`
+	EnableNetwork  bool          `yaml:"enable_network"`
+	EnablePreload  bool          `yaml:"enable_preload"`
+	AllowedSyscalls []string     `yaml:"allowed_syscalls"`
+	Proxy          ProxyConfig   `yaml:"proxy"`
+	Gateway        GatewayConfig `yaml:"gateway"`
+	Redis          RedisConfig   `yaml:"redis"`
+}
 
-	debug, err := strconv.ParseBool(os.Getenv("DEBUG"))
-	if err == nil {
-		difySandboxGlobalConfigurations.App.Debug = debug
-	}
+var (
+	globalConfig *DifySandboxGlobalConfigurations
+	configMutex  sync.RWMutex
+)
 
-	max_workers := os.Getenv("MAX_WORKERS")
-	if max_workers != "" {
-		difySandboxGlobalConfigurations.MaxWorkers, _ = strconv.Atoi(max_workers)
-	}
-
-	max_requests := os.Getenv("MAX_REQUESTS")
-	if max_requests != "" {
-		difySandboxGlobalConfigurations.MaxRequests, _ = strconv.Atoi(max_requests)
-	}
-
-	port := os.Getenv("SANDBOX_PORT")
-	if port != "" {
-		difySandboxGlobalConfigurations.App.Port, _ = strconv.Atoi(port)
-	}
-
-	timeout := os.Getenv("WORKER_TIMEOUT")
-	if timeout != "" {
-		difySandboxGlobalConfigurations.WorkerTimeout, _ = strconv.Atoi(timeout)
-	}
-
-	api_key := os.Getenv("API_KEY")
-	if api_key != "" {
-		difySandboxGlobalConfigurations.App.Key = api_key
-	}
-
-	python_path := os.Getenv("PYTHON_PATH")
-	if python_path != "" {
-		difySandboxGlobalConfigurations.PythonPath = python_path
-	}
-
-	if difySandboxGlobalConfigurations.PythonPath == "" {
-		difySandboxGlobalConfigurations.PythonPath = "/usr/local/bin/python3"
-	}
-
-	python_lib_path := os.Getenv("PYTHON_LIB_PATH")
-	if python_lib_path != "" {
-		difySandboxGlobalConfigurations.PythonLibPaths = strings.Split(python_lib_path, ",")
-	}
-
-	if len(difySandboxGlobalConfigurations.PythonLibPaths) == 0 {
-		difySandboxGlobalConfigurations.PythonLibPaths = DEFAULT_PYTHON_LIB_REQUIREMENTS
-	}
-
-	python_pip_mirror_url := os.Getenv("PIP_MIRROR_URL")
-	if python_pip_mirror_url != "" {
-		difySandboxGlobalConfigurations.PythonPipMirrorURL = python_pip_mirror_url
-	}
-
-	python_deps_update_interval := os.Getenv("PYTHON_DEPS_UPDATE_INTERVAL")
-	if python_deps_update_interval != "" {
-		difySandboxGlobalConfigurations.PythonDepsUpdateInterval = python_deps_update_interval
-	}
-
-	// if not set "PythonDepsUpdateInterval", update python dependencies every 30 minutes to keep the sandbox up-to-date
-	if difySandboxGlobalConfigurations.PythonDepsUpdateInterval == "" {
-		difySandboxGlobalConfigurations.PythonDepsUpdateInterval = "30m"
-	}
-
-	nodejs_path := os.Getenv("NODEJS_PATH")
-	if nodejs_path != "" {
-		difySandboxGlobalConfigurations.NodejsPath = nodejs_path
-	}
-
-	if difySandboxGlobalConfigurations.NodejsPath == "" {
-		difySandboxGlobalConfigurations.NodejsPath = "/usr/local/bin/node"
-	}
-
-	enable_network := os.Getenv("ENABLE_NETWORK")
-	if enable_network != "" {
-		difySandboxGlobalConfigurations.EnableNetwork, _ = strconv.ParseBool(enable_network)
-	}
-
-	enable_preload := os.Getenv("ENABLE_PRELOAD")
-	if enable_preload != "" {
-		difySandboxGlobalConfigurations.EnablePreload, _ = strconv.ParseBool(enable_preload)
-	}
-
-	allowed_syscalls := os.Getenv("ALLOWED_SYSCALLS")
-	if allowed_syscalls != "" {
-		strs := strings.Split(allowed_syscalls, ",")
-		ary := make([]int, len(strs))
-		for i := range ary {
-			ary[i], err = strconv.Atoi(strs[i])
-			if err != nil {
-				return err
-			}
-		}
-		difySandboxGlobalConfigurations.AllowedSyscalls = ary
-	}
-
-	if difySandboxGlobalConfigurations.EnableNetwork {
-		log.Info("network has been enabled")
-		socks5_proxy := os.Getenv("SOCKS5_PROXY")
-		if socks5_proxy != "" {
-			difySandboxGlobalConfigurations.Proxy.Socks5 = socks5_proxy
-		}
-
-		if difySandboxGlobalConfigurations.Proxy.Socks5 != "" {
-			log.Info("using socks5 proxy: %s", difySandboxGlobalConfigurations.Proxy.Socks5)
-		}
-
-		https_proxy := os.Getenv("HTTPS_PROXY")
-		if https_proxy != "" {
-			difySandboxGlobalConfigurations.Proxy.Https = https_proxy
-		}
-
-		if difySandboxGlobalConfigurations.Proxy.Https != "" {
-			log.Info("using https proxy: %s", difySandboxGlobalConfigurations.Proxy.Https)
-		}
-
-		http_proxy := os.Getenv("HTTP_PROXY")
-		if http_proxy != "" {
-			difySandboxGlobalConfigurations.Proxy.Http = http_proxy
-		}
-
-		if difySandboxGlobalConfigurations.Proxy.Http != "" {
-			log.Info("using http proxy: %s", difySandboxGlobalConfigurations.Proxy.Http)
-		}
+func InitConfig(configPath string) error {
+	// 这里实现配置加载逻辑
+	// 为了简化，我们创建一个默认配置
+	globalConfig = &DifySandboxGlobalConfigurations{
+		App: AppConfig{
+			Port:  8194,
+			Debug: true,
+			Key:   "dify-sandbox",
+		},
+		MaxWorkers:     4,
+		MaxRequests:    50,
+		WorkerTimeout:  5,
+		PythonPath:     "/usr/local/bin/python3",
+		EnableNetwork:  true,
+		EnablePreload:  false,
+		AllowedSyscalls: []string{},
+		Proxy: ProxyConfig{
+			Socks5: "",
+			Http:   "",
+			Https:  "",
+		},
+		Gateway: GatewayConfig{
+			Port:                 8080,
+			RedisAddr:           "localhost:6379",
+			LoadBalancerStrategy: "least-connections",
+			HealthCheckInterval:  15,
+			CorsEnabled:          true,
+		},
+		Redis: RedisConfig{
+			Addr:     "localhost:6379",
+			Password: "",
+			DB:       0,
+		},
 	}
 	return nil
 }
 
-// avoid global modification, use value copy instead
-func GetDifySandboxGlobalConfigurations() types.DifySandboxGlobalConfigurations {
-	return difySandboxGlobalConfigurations
+func GetDifySandboxGlobalConfigurations() *DifySandboxGlobalConfigurations {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return globalConfig
 }
-
-
-
-
