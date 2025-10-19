@@ -33,3 +33,49 @@
  [INFO]network has been enabled
 [INFO]config init success
 [INFO]runner dependencies init success
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+[INFO]Redis address: localhost:6379
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+[INFO]Redis address: localhost:6379
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+[INFO]Redis address: localhost:6379
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+[INFO]Redis address: localhost:6379
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+[INFO]Redis address: localhost:6379
+ [INFO]config init success
+[INFO]Starting gateway server on :8080
+[INFO]Load balancer strategy: least-connections
+[INFO]Health check interval: 15 seconds
+[INFO]Redis address: localhost:6379

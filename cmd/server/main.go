@@ -1,9 +1,17 @@
 package main
 
-import "github.com/langgenius/dify-sandbox/internal/server"
-import "fmt"
+import (
+	"fmt"
+	"log"
+
+	"github.com/langgenius/dify-sandbox/internal/server"
+)
 
 func main() {
-    fmt.Println("main!")
-	server.Run()
+    fmt.Println("🚀 Starting XAI Router Gateway...")
+    
+    // 启动服务器
+    server.Run()
+    
+    log.Println("XAI Router Gateway stopped")
 }
