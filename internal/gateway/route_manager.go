@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,23 +18,28 @@ import (
 
 // 路由管理器
 type RouteManager struct {
-	redisClient    *redis.Client
-	eventStream    *EventStreamManager
-	routeCache     map[string]RouteConfig
-	router         *mux.Router
-	updateChannel  chan struct{}
-	mutex          sync.RWMutex
-	redisEnabled   bool
-	eventConsumers []*EventConsumer
+	redisClient      *redis.Client
+	eventStream      *EventStreamManager
+	routeCache       map[string]RouteConfig
+	routeVersions    map[string]int64 // 🔧 新增：内存中的路由版本
+	router           *mux.Router
+	updateChannel    chan struct{}
+	mutex            sync.RWMutex
+	redisEnabled     bool
+	eventConsumers   []*EventConsumer
+	lastConfigUpdate int64            // 🔧 新增：最后配置更新时间
+	instanceID       string           // 🔧 新增：实例ID
 }
 
 func NewRouteManager(redisClient *redis.Client) *RouteManager {
 	rm := &RouteManager{
-		redisClient:   redisClient,
-		routeCache:    make(map[string]RouteConfig),
-		router:        mux.NewRouter(),
-		updateChannel: make(chan struct{}, 1),
-		redisEnabled:  true,
+		redisClient:    redisClient,
+		routeCache:     make(map[string]RouteConfig),
+		routeVersions:  make(map[string]int64), // 🔧 初始化版本映射
+		router:         mux.NewRouter(),
+		updateChannel:  make(chan struct{}, 1),
+		redisEnabled:   true,
+		instanceID:     fmt.Sprintf("instance-%d", time.Now().UnixNano()), // 🔧 实例标识
 	}
 
 	// 测试 Redis 连接
@@ -48,17 +54,126 @@ func NewRouteManager(redisClient *redis.Client) *RouteManager {
 		// 初始化事件流管理器
 		rm.eventStream = NewEventStreamManager(redisClient)
 		
-		// 从Redis加载初始配置
-		rm.loadInitialRoutes()
+		// 🔧 修改：使用增量加载代替全量加载
+		rm.loadRoutesIncremental()
 		
 		// 启动事件消费者
 		rm.startEventConsumers()
 	}
 
-	// 启动配置监听
-	go rm.watchConfigurationChanges()
+	// 🔧 修改：延长配置监听间隔到1分钟
+	go rm.watchConfigurationChanges(60 * time.Second)
 
 	return rm
+}
+
+// 🔧 新增：增量加载路由
+func (rm *RouteManager) loadRoutesIncremental() {
+	if !rm.redisEnabled {
+		return
+	}
+
+	ctx := context.Background()
+	
+	// 1. 获取全局配置版本
+	configVersionJSON, err := rm.redisClient.Get(ctx, "gateway:config:version").Result()
+	if err != nil && err != redis.Nil {
+		log.Printf("Failed to get config version: %v", err)
+		return
+	}
+
+	var currentConfigVersion int64
+	if configVersionJSON != "" {
+		currentConfigVersion, _ = strconv.ParseInt(configVersionJSON, 10, 64)
+	}
+
+	// 2. 如果版本没有变化，跳过加载
+	if currentConfigVersion <= rm.lastConfigUpdate {
+		return
+	}
+
+	// 3. 获取有变更的路由ID列表
+	updatedRoutes, err := rm.redisClient.SMembers(ctx, "gateway:routes:updated").Result()
+	if err != nil && err != redis.Nil {
+		log.Printf("Failed to get updated routes: %v", err)
+		return
+	}
+
+	rm.mutex.Lock()
+	defer rm.mutex.Unlock()
+
+	updateCount := 0
+	deleteCount := 0
+
+	if len(updatedRoutes) > 0 {
+		// 4. 增量更新：只加载有变更的路由
+		for _, routeID := range updatedRoutes {
+			if routeID == "" {
+				continue
+			}
+
+			if strings.HasPrefix(routeID, "DELETE:") {
+				// 处理删除的路由
+				actualRouteID := strings.TrimPrefix(routeID, "DELETE:")
+				if _, exists := rm.routeCache[actualRouteID]; exists {
+					delete(rm.routeCache, actualRouteID)
+					delete(rm.routeVersions, actualRouteID)
+					deleteCount++
+					log.Printf("🗑️  Incremental delete: %s", actualRouteID)
+				}
+			} else {
+				// 处理新增/更新的路由
+				routeJSON, err := rm.redisClient.HGet(ctx, "gateway:routes", routeID).Result()
+				if err == nil {
+					var route RouteConfig
+					if err := json.Unmarshal([]byte(routeJSON), &route); err == nil {
+						// 检查版本，避免重复更新
+						if route.Version > rm.routeVersions[routeID] {
+							rm.routeCache[routeID] = route
+							rm.routeVersions[routeID] = route.Version
+							updateCount++
+							log.Printf("🔄 Incremental update: %s (v%d)", routeID, route.Version)
+						}
+					}
+				}
+			}
+		}
+
+		// 5. 清理更新标记
+		rm.redisClient.Del(ctx, "gateway:routes:updated")
+	} else {
+		// 6. 如果没有更新信息，回退到全量加载（安全机制）
+		log.Printf("⚠️  No update info, falling back to full load")
+		rm.loadAllRoutesFromRedis()
+		updateCount = len(rm.routeCache)
+	}
+
+	// 7. 更新配置版本
+	rm.lastConfigUpdate = currentConfigVersion
+
+	log.Printf("📦 Incremental load: %d updated, %d deleted, total: %d routes", 
+		updateCount, deleteCount, len(rm.routeCache))
+}
+
+// 🔧 新增：全量加载（备用）
+func (rm *RouteManager) loadAllRoutesFromRedis() {
+	ctx := context.Background()
+	routes, err := rm.redisClient.HGetAll(ctx, "gateway:routes").Result()
+	if err != nil {
+		log.Printf("Failed to load routes from Redis: %v", err)
+		return
+	}
+
+	rm.routeCache = make(map[string]RouteConfig)
+	rm.routeVersions = make(map[string]int64)
+
+	for routeID, routeJSON := range routes {
+		var route RouteConfig
+		if err := json.Unmarshal([]byte(routeJSON), &route); err == nil {
+			rm.routeCache[routeID] = route
+			rm.routeVersions[routeID] = route.Version
+		}
+	}
 }
 
 // 加载初始路由
@@ -120,26 +235,40 @@ type RouteEventHandler struct {
 }
 
 func (h *RouteEventHandler) HandleEvent(event *RouteEvent) error {
+	startTime := time.Now()
+	log.Printf("🎬 [EVENT] 开始处理事件 | 类型: %s | ID: %s | 路由: %s", 
+		event.EventType, event.EventID, event.RouteID)
+
+	var err error
 	switch event.EventType {
 	case "CREATE":
-		return h.handleCreateEvent(event)
+		err = h.handleCreateEvent(event)
 	case "UPDATE":
-		return h.handleUpdateEvent(event)
+		err = h.handleUpdateEvent(event)
 	case "DELETE":
-		return h.handleDeleteEvent(event)
+		err = h.handleDeleteEvent(event)
 	default:
-		log.Printf("Unknown event type: %s", event.EventType)
-		return nil
+		log.Printf("❌ [EVENT] 未知事件类型: %s", event.EventType)
+		err = nil
 	}
+
+	duration := time.Since(startTime)
+	if err != nil {
+		log.Printf("💥 [EVENT] 事件处理失败 | 类型: %s | ID: %s | 耗时: %v | 错误: %v", 
+			event.EventType, event.EventID, duration, err)
+	} else {
+		log.Printf("🎉 [EVENT] 事件处理成功 | 类型: %s | ID: %s | 耗时: %v", 
+			event.EventType, event.EventID, duration)
+	}
+	
+	return err
 }
 
-// 同样修复 handleCreateEvent
 func (h *RouteEventHandler) handleCreateEvent(event *RouteEvent) error {
     if event.RouteData == nil {
         return fmt.Errorf("missing route data for CREATE event")
     }
 
-    // 🔧 修复：使用 RouteData 中的 ID
     targetRouteID := event.RouteData.ID
     if targetRouteID == "" {
         targetRouteID = event.RouteID
@@ -148,8 +277,15 @@ func (h *RouteEventHandler) handleCreateEvent(event *RouteEvent) error {
     h.routeManager.mutex.Lock()
     defer h.routeManager.mutex.Unlock()
 
+    // 检查是否已存在
+    if existing, exists := h.routeManager.routeCache[targetRouteID]; exists {
+        log.Printf("⚠️ [CREATE] 路由已存在，将被覆盖: %s (原版本: %d)", targetRouteID, existing.Version)
+    }
+
     h.routeManager.routeCache[targetRouteID] = *event.RouteData
-    log.Printf("📝 Created route from event: %s", targetRouteID)
+    h.routeManager.routeVersions[targetRouteID] = event.RouteData.Version
+    log.Printf("✅ [CREATE] 路由创建成功: %s (版本: %d)", targetRouteID, event.RouteData.Version)
+    
     return nil
 }
 
@@ -158,27 +294,28 @@ func (h *RouteEventHandler) handleUpdateEvent(event *RouteEvent) error {
         return fmt.Errorf("missing route data for UPDATE event")
     }
 
-    // 🔧 修复：使用 RouteData 中的 ID 而不是事件的 RouteID
     targetRouteID := event.RouteData.ID
     if targetRouteID == "" {
-        targetRouteID = event.RouteID // 回退到事件RouteID
+        targetRouteID = event.RouteID
     }
 
     h.routeManager.mutex.Lock()
     defer h.routeManager.mutex.Unlock()
 
-    log.Printf("🔄 Processing UPDATE event for route: %s (event ID: %s)", targetRouteID, event.RouteID)
+    log.Printf("📊 [UPDATE] 处理路由更新: %s (事件ID: %s)", targetRouteID, event.RouteID)
     
     if existing, exists := h.routeManager.routeCache[targetRouteID]; exists {
-        log.Printf("📝 Updating existing route: %s", targetRouteID)
-        log.Printf("   Old code: %.50s...", existing.Code)
-        log.Printf("   New code: %.50s...", event.RouteData.Code)
+        log.Printf("📝 [UPDATE] 更新现有路由: %s", targetRouteID)
+        log.Printf("   📋 旧版本: %d, 新版本: %d", existing.Version, event.RouteData.Version)
         
         h.routeManager.routeCache[targetRouteID] = *event.RouteData
-        log.Printf("✅ Successfully updated route from event: %s", targetRouteID)
+        h.routeManager.routeVersions[targetRouteID] = event.RouteData.Version
+        log.Printf("✅ [UPDATE] 路由更新成功: %s (版本: %d)", targetRouteID, event.RouteData.Version)
     } else {
-        log.Printf("⚠️  Route not found for UPDATE, creating new: %s", targetRouteID)
+        log.Printf("⚠️ [UPDATE] 路由不存在，创建新路由: %s", targetRouteID)
         h.routeManager.routeCache[targetRouteID] = *event.RouteData
+        h.routeManager.routeVersions[targetRouteID] = event.RouteData.Version
+        log.Printf("✅ [UPDATE] 新路由创建成功: %s (版本: %d)", targetRouteID, event.RouteData.Version)
     }
     
     return nil
@@ -190,19 +327,23 @@ func (h *RouteEventHandler) handleDeleteEvent(event *RouteEvent) error {
 
     targetRouteID := event.RouteID
     
-    log.Printf("🔄 Processing DELETE event for route: %s", targetRouteID)
+    log.Printf("🗑️ [DELETE] 处理路由删除: %s", targetRouteID)
     
     if _, exists := h.routeManager.routeCache[targetRouteID]; exists {
         delete(h.routeManager.routeCache, targetRouteID)
-        log.Printf("✅ Successfully deleted route from event: %s", targetRouteID)
+        delete(h.routeManager.routeVersions, targetRouteID)
+        log.Printf("✅ [DELETE] 路由删除成功: %s", targetRouteID)
     } else {
-        log.Printf("⚠️  Route not found for DELETE event: %s", targetRouteID)
-        // 可以尝试从事件数据中查找路由ID
+        log.Printf("⚠️ [DELETE] 路由不存在: %s", targetRouteID)
+        // 尝试从事件数据中查找路由ID
         if event.RouteData != nil && event.RouteData.ID != "" {
             alternativeID := event.RouteData.ID
             if _, exists := h.routeManager.routeCache[alternativeID]; exists {
                 delete(h.routeManager.routeCache, alternativeID)
-                log.Printf("✅ Successfully deleted route using alternative ID: %s", alternativeID)
+                delete(h.routeManager.routeVersions, alternativeID)
+                log.Printf("✅ [DELETE] 通过备用ID删除成功: %s", alternativeID)
+            } else {
+                log.Printf("❌ [DELETE] 备用ID也不存在: %s", alternativeID)
             }
         }
     }
@@ -210,15 +351,17 @@ func (h *RouteEventHandler) handleDeleteEvent(event *RouteEvent) error {
     return nil
 }
 
-// 监听配置变化
-func (rm *RouteManager) watchConfigurationChanges() {
-	ticker := time.NewTicker(10 * time.Second)
+// 🔧 修改：配置监听方法，支持自定义间隔
+func (rm *RouteManager) watchConfigurationChanges(interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	log.Printf("⏰ Configuration watcher started (interval: %v)", interval)
 
 	for {
 		select {
 		case <-rm.updateChannel:
-			rm.loadInitialRoutes()
+			rm.loadRoutesIncremental() // 🔧 使用增量加载
 		case <-ticker.C:
 			rm.checkForConfigurationUpdates()
 		}
@@ -230,15 +373,21 @@ func (rm *RouteManager) checkForConfigurationUpdates() {
 		return
 	}
 
-	ctx := context.Background()
-	lastUpdate, err := rm.redisClient.Get(ctx, "gateway:routes:last_updated").Result()
-	if err != nil && err != redis.Nil {
-		log.Printf("Failed to check route updates: %v", err)
+	rm.loadRoutesIncremental() // 🔧 直接使用增量加载
+}
+
+// 🔧 新增：更新配置版本（在CUD操作中调用）
+func (rm *RouteManager) updateConfigVersion() {
+	if !rm.redisEnabled {
 		return
 	}
 
-	if lastUpdate != "" {
-		rm.loadInitialRoutes()
+	ctx := context.Background()
+	newVersion := time.Now().UnixNano()
+	
+	err := rm.redisClient.Set(ctx, "gateway:config:version", newVersion, 0).Err()
+	if err != nil {
+		log.Printf("Failed to update config version: %v", err)
 	}
 }
 
@@ -303,7 +452,7 @@ func (rm *RouteManager) matchPathWithParams(routePath, requestPath string) bool 
 	return route.Match(req, &match)
 }
 
-// 添加路由（发布事件）
+// 添加路由（发布事件 + 持久化存储）
 func (rm *RouteManager) AddRoute(route RouteConfig) error {
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
@@ -313,18 +462,39 @@ func (rm *RouteManager) AddRoute(route RouteConfig) error {
 		return err
 	}
 
-	// 设置时间戳
+	// 设置时间戳和版本
 	now := time.Now().Unix()
 	if route.CreatedAt == 0 {
 		route.CreatedAt = now
 	}
 	route.UpdatedAt = now
+	route.Version = time.Now().UnixNano() // 🔧 设置版本号
 
-	// 发布创建事件
+	// 保存到Redis（持久化存储）
+	if rm.redisEnabled {
+		ctx := context.Background()
+		routeJSON, _ := json.Marshal(route)
+		
+		// 🔧 修复：保存到Redis哈希表
+		err := rm.redisClient.HSet(ctx, "gateway:routes", route.ID, routeJSON).Err()
+		if err != nil {
+			log.Printf("Failed to save route to Redis: %v", err)
+			// 继续在内存中保存，但记录错误
+		} else {
+			// 🔧 新增：标记路由为已更新（用于增量同步）
+			rm.redisClient.SAdd(ctx, "gateway:routes:updated", route.ID)
+			// 🔧 新增：更新全局配置版本
+			rm.updateConfigVersion()
+			
+			log.Printf("💾 Route saved to Redis: %s", route.ID)
+		}
+	}
+
+	// 发布创建事件（用于实时同步）
 	if rm.redisEnabled {
 		event := &RouteEvent{
 			EventID:   fmt.Sprintf("create-%d", now),
-			EventType: "CREATE",
+			EventType: "CREATE", 
 			RouteID:   route.ID,
 			RouteData: &route,
 			Timestamp: now,
@@ -333,12 +503,12 @@ func (rm *RouteManager) AddRoute(route RouteConfig) error {
 
 		if err := rm.eventStream.PublishRouteEvent(context.Background(), event); err != nil {
 			log.Printf("Failed to publish CREATE event: %v", err)
-			// 继续在内存中保存
 		}
 	}
 
 	// 更新内存缓存
 	rm.routeCache[route.ID] = route
+	rm.routeVersions[route.ID] = route.Version
 
 	// 通知更新
 	select {
@@ -350,7 +520,7 @@ func (rm *RouteManager) AddRoute(route RouteConfig) error {
 	return nil
 }
 
-// 更新路由（发布事件）
+// 更新路由（发布事件 + 持久化存储）
 func (rm *RouteManager) UpdateRoute(routeID string, newRoute RouteConfig) error {
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
@@ -370,10 +540,31 @@ func (rm *RouteManager) UpdateRoute(routeID string, newRoute RouteConfig) error 
 		return fmt.Errorf("route ID cannot be changed")
 	}
 
-	// 设置更新时间戳
+	// 设置更新时间戳和版本
 	newRoute.UpdatedAt = time.Now().Unix()
+	newRoute.Version = time.Now().UnixNano() // 🔧 设置版本号
 
-	// 发布更新事件
+	// 保存到Redis（持久化存储）
+	if rm.redisEnabled {
+		ctx := context.Background()
+		routeJSON, _ := json.Marshal(newRoute)
+		
+		// 🔧 修复：更新Redis哈希表
+		err := rm.redisClient.HSet(ctx, "gateway:routes", routeID, routeJSON).Err()
+		if err != nil {
+			log.Printf("Failed to update route in Redis: %v", err)
+			// 继续在内存中更新，但记录错误
+		} else {
+			// 🔧 新增：标记路由为已更新（用于增量同步）
+			rm.redisClient.SAdd(ctx, "gateway:routes:updated", routeID)
+			// 🔧 新增：更新全局配置版本
+			rm.updateConfigVersion()
+			
+			log.Printf("💾 Route updated in Redis: %s", routeID)
+		}
+	}
+
+	// 发布更新事件（用于实时同步）
 	if rm.redisEnabled {
 		event := &RouteEvent{
 			EventID:   fmt.Sprintf("update-%d", time.Now().Unix()),
@@ -386,12 +577,12 @@ func (rm *RouteManager) UpdateRoute(routeID string, newRoute RouteConfig) error 
 
 		if err := rm.eventStream.PublishRouteEvent(context.Background(), event); err != nil {
 			log.Printf("Failed to publish UPDATE event: %v", err)
-			// 继续在内存中更新
 		}
 	}
 
 	// 更新内存缓存
 	rm.routeCache[routeID] = newRoute
+	rm.routeVersions[routeID] = newRoute.Version // 🔧 更新版本映射
 
 	// 通知更新
 	select {
@@ -402,12 +593,31 @@ func (rm *RouteManager) UpdateRoute(routeID string, newRoute RouteConfig) error 
 	return nil
 }
 
-// 删除路由（发布事件）
+// 删除路由（发布事件 + 持久化存储）
 func (rm *RouteManager) DeleteRoute(routeID string) error {
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
 
-	// 发布删除事件
+	ctx := context.Background()
+	
+	// 从Redis删除（持久化存储）
+	if rm.redisEnabled {
+		// 🔧 修复：从Redis哈希表中删除路由
+		err := rm.redisClient.HDel(ctx, "gateway:routes", routeID).Err()
+		if err != nil {
+			log.Printf("Failed to delete route from Redis: %v", err)
+			// 继续删除内存中的路由，但记录错误
+		} else {
+			// 🔧 新增：标记路由为已删除（用于增量同步）
+			rm.redisClient.SAdd(ctx, "gateway:routes:updated", "DELETE:"+routeID)
+			// 🔧 新增：更新全局配置版本
+			rm.updateConfigVersion()
+			
+			log.Printf("💾 Route deleted from Redis: %s", routeID)
+		}
+	}
+
+	// 发布删除事件（用于实时同步）
 	if rm.redisEnabled {
 		event := &RouteEvent{
 			EventID:   fmt.Sprintf("delete-%d", time.Now().Unix()),
@@ -419,12 +629,12 @@ func (rm *RouteManager) DeleteRoute(routeID string) error {
 
 		if err := rm.eventStream.PublishRouteEvent(context.Background(), event); err != nil {
 			log.Printf("Failed to publish DELETE event: %v", err)
-			// 继续删除内存中的路由
 		}
 	}
 
 	// 从内存缓存删除
 	delete(rm.routeCache, routeID)
+	delete(rm.routeVersions, routeID) // 🔧 清理版本映射
 
 	// 通知更新
 	select {

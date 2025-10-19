@@ -15,7 +15,16 @@ type RouteConfig struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`
 	CreatedAt   int64             `json:"created_at,omitempty"`
 	UpdatedAt   int64             `json:"updated_at,omitempty"`
+	Version     int64             `json:"version,omitempty"` // 🔧 新增：版本号
 }
+
+// 配置版本信息
+type ConfigVersion struct {
+	LastUpdated int64             `json:"last_updated"`
+	RouteVersions map[string]int64 `json:"route_versions"` // 每个路由的版本号
+	TotalRoutes  int              `json:"total_routes"`
+}
+
 
 // 沙箱服务实例
 type SandboxInstance struct {

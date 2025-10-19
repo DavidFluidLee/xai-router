@@ -109,6 +109,7 @@ func (dr *DistributedRouter) setupGinRoutes() {
 		adminGroup.GET("/events/pending", dr.getPendingMessagesHandler)
 		adminGroup.POST("/events/test", dr.publishTestEventHandler)
 		adminGroup.GET("/events/consumers", dr.getEventConsumersHandler) // 新增
+
 	}
 }
 
