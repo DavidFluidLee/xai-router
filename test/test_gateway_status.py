@@ -6,8 +6,8 @@ def test_gateway_status():
     print("🔍 网关状态检查")
     print("=" * 50)
     
-    base_url = "http://localhost:8081"
-    headers = {"X-Api-Key": "xai-admin-internal"}
+    base_url = "http://localhost:8080"
+    headers = {"X-Api-Key": "xai-admin-key"}
     
     # 1. 检查基本状态
     print("1. 基本状态检查:")

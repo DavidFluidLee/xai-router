@@ -7,7 +7,7 @@ import requests
 import time
 
 ADMIN_URL = "http://localhost:8195"
-GATEWAY_URL = "http://localhost:8081"
+GATEWAY_URL = "http://localhost:8080"
 
 # API 认证头
 HEADERS = {

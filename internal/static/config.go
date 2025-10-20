@@ -66,7 +66,7 @@ func InitConfig(configPath string) error {
 	// 先创建默认配置
 	globalConfig = &DifySandboxGlobalConfigurations{
 		App: AppConfig{
-			Port:  8194,
+			Port:  8195,
 			Debug: true,
 			Key:   "dify-sandbox",
 		},

@@ -5,8 +5,9 @@ echo "=========================================="
 
 # 1. 测试CREATE立即生效
 echo "1. 测试CREATE立即生效..."
-curl -X POST http://localhost:8081/admin/routes \
+curl -X POST http://localhost:8080/admin/routes \
   -H "Content-Type: application/json" \
+  -H 'X-Api-Key: xai-admin-key' \
   -d '{
     "id": "immediate-test",
     "path": "/api/immediate",
@@ -24,7 +25,7 @@ echo ""
 
 # 2. 测试UPDATE立即生效
 echo "2. 测试UPDATE立即生效..."
-curl -X PUT http://localhost:8081/admin/routes/immediate-test \
+curl -X PUT http://localhost:8080/admin/routes/immediate-test \
   -H "Content-Type: application/json" \
   -d '{
     "id": "immediate-test", 
@@ -43,11 +44,11 @@ echo ""
 
 # 3. 测试DELETE立即生效
 echo "3. 测试DELETE立即生效..."
-curl -X DELETE http://localhost:8081/admin/routes/immediate-test > /dev/null 2>&1
+curl -X DELETE http://localhost:8080/admin/routes/immediate-test > /dev/null 2>&1
 
 # 立即测试删除是否生效
 echo "DELETE后立即测试:"
-curl http://localhost:8080/api/immediate
+curl http://localhost:8195/api/immediate
 echo ""
 
 echo "=========================================="

@@ -13,6 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
+	"github.com/langgenius/dify-sandbox/internal/middleware"
+	"github.com/langgenius/dify-sandbox/internal/static"
 )
 
 // 动态路由器
@@ -92,37 +94,64 @@ func (dr *DistributedRouter) setupGinRoutes() {
 	dr.ginRouter.Use(dr.corsMiddleware())
 	dr.ginRouter.Use(gin.Logger())
 
-	// 管理接口
+	// 管理接口 - 添加管理员认证
 	adminGroup := dr.ginRouter.Group("/admin")
+	adminGroup.Use(middleware.AdminAuth())
 	{
 		adminGroup.GET("/routes", dr.listRoutesHandler)
 		adminGroup.POST("/routes", dr.addRouteHandler)
-		adminGroup.PUT("/routes/:id", dr.updateRouteHandler) // 新增更新端点
+		adminGroup.PUT("/routes/:id", dr.updateRouteHandler)
 		adminGroup.DELETE("/routes/:id", dr.deleteRouteHandler)
 		adminGroup.GET("/sandboxes", dr.listSandboxesHandler)
 		adminGroup.POST("/sandboxes/register", dr.registerSandboxHandler)
 		adminGroup.DELETE("/sandboxes/:id", dr.deleteSandboxHandler)
 		adminGroup.GET("/health", dr.healthHandler)
 
-        // 新增事件流管理接口
+		// 事件流管理接口
 		adminGroup.GET("/events/stream-info", dr.getStreamInfoHandler)
 		adminGroup.GET("/events/pending", dr.getPendingMessagesHandler)
 		adminGroup.POST("/events/test", dr.publishTestEventHandler)
-		adminGroup.GET("/events/consumers", dr.getEventConsumersHandler) // 新增
+		adminGroup.GET("/events/consumers", dr.getEventConsumersHandler)
 
-            // 🔧 新增：注册新的管理接口
-        adminGroup.GET("/config/version", dr.getConfigVersionHandler)
-    adminGroup.GET("/events/stats", dr.getEventStatsHandler)
-    adminGroup.POST("/sync/trigger", dr.triggerSyncHandler)
-    adminGroup.GET("/routes/:routeId/details", dr.getRouteDetailsHandler)
-    adminGroup.POST("/events/cleanup", dr.cleanupEventsHandler)
-
+		// 其他管理接口
+		adminGroup.GET("/config/version", dr.getConfigVersionHandler)
+		adminGroup.GET("/events/stats", dr.getEventStatsHandler)
+		adminGroup.POST("/sync/trigger", dr.triggerSyncHandler)
+		adminGroup.GET("/routes/:routeId/details", dr.getRouteDetailsHandler)
+		adminGroup.POST("/events/cleanup", dr.cleanupEventsHandler)
 	}
 }
 
 func (dr *DistributedRouter) setupMuxRoutes() {
-	// 使用Mux处理所有动态路由
-	dr.muxRouter.PathPrefix("/").HandlerFunc(dr.dynamicRouteHandler)
+	// 使用Mux处理所有动态路由，添加业务认证
+	dr.muxRouter.PathPrefix("/").HandlerFunc(dr.authenticatedRouteHandler)
+}
+
+// 认证路由处理器
+func (dr *DistributedRouter) authenticatedRouteHandler(w http.ResponseWriter, r *http.Request) {
+	// 检查业务网关认证
+	if !dr.authenticateGatewayRequest(r) {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(gin.H{"error": "invalid gateway api key"})
+		return
+	}
+	
+	// 认证通过，继续处理路由
+	dr.dynamicRouteHandler(w, r)
+}
+
+// 网关认证检查
+func (dr *DistributedRouter) authenticateGatewayRequest(r *http.Request) bool {
+	apiKey := r.Header.Get("X-Api-Key")
+	config := static.GetDifySandboxGlobalConfigurations()
+	
+	// 使用网关密钥进行认证
+	expectedKey := config.App.GatewayKey
+	if expectedKey == "" {
+		expectedKey = config.App.Key // 兼容旧配置
+	}
+	
+	return expectedKey != "" && expectedKey == apiKey
 }
 
 func (dr *DistributedRouter) dynamicRouteHandler(w http.ResponseWriter, r *http.Request) {
@@ -169,11 +198,11 @@ func (dr *DistributedRouter) handleSandboxRequest(route *RouteConfig, w http.Res
 		"timeout":        route.Timeout,
 	}
 
-	// 转发到沙箱执行
-	dr.forwardToSandbox(instance, executionReq, w)
+	// 转发到沙箱执行，传递原始请求
+	dr.forwardToSandbox(instance, executionReq, w, r)
 }
 
-func (dr *DistributedRouter) forwardToSandbox(instance *SandboxInstance, reqData map[string]interface{}, w http.ResponseWriter) {
+func (dr *DistributedRouter) forwardToSandbox(instance *SandboxInstance, reqData map[string]interface{}, w http.ResponseWriter, r *http.Request) {
 	timeout := 30 * time.Second
 	if to, ok := reqData["timeout"].(int); ok {
 		timeout = time.Duration(to) * time.Second
@@ -183,7 +212,6 @@ func (dr *DistributedRouter) forwardToSandbox(instance *SandboxInstance, reqData
 
 	reqJSON, _ := json.Marshal(reqData)
 	
-	// 使用正确的沙箱端点 /run
 	req, err := http.NewRequest("POST", instance.URL+"/run", bytes.NewBuffer(reqJSON))
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -192,7 +220,18 @@ func (dr *DistributedRouter) forwardToSandbox(instance *SandboxInstance, reqData
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", "xai-sandbox") // 添加 API Key
+	
+	// 关键修改：使用客户端传递的 API Key，如果不存在则使用配置的默认值
+	apiKey := r.Header.Get("X-Api-Key")
+	if apiKey == "" {
+		// 如果没有传递 API Key，使用配置的默认值
+		config := static.GetDifySandboxGlobalConfigurations()
+		apiKey = config.App.GatewayKey
+		if apiKey == "" {
+			apiKey = "xai-sandbox" // 最终回退
+		}
+	}
+	req.Header.Set("X-Api-Key", apiKey)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -247,7 +286,6 @@ func (dr *DistributedRouter) addRouteHandler(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "route added", "id": route.ID})
 }
 
-// 新增：更新路由处理器
 func (dr *DistributedRouter) updateRouteHandler(c *gin.Context) {
 	id := c.Param("id")
 	

@@ -23,7 +23,6 @@ type DifySandboxGlobalConfigurations struct {
 	// 添加缺失的配置字段
 	Gateway struct {
 		Port                int    `yaml:"port"`
-		RedisAddr           string `yaml:"redis_addr"`
 		LoadBalancerStrategy string `yaml:"load_balancer_strategy"`
 		HealthCheckInterval int    `yaml:"health_check_interval"`
 		CorsEnabled         bool   `yaml:"cors_enabled"`
